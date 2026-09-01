@@ -29,8 +29,6 @@ npx skills add HChen318/ai-skills
 1. **Node.js**：`>= 18.0.0`
 2. **ego lite 浏览器**（完成 Level 1/2 身份认证必需）：
    - 官网下载：[https://lite.ego.app/](https://lite.ego.app/)
-   - 安装 `ego lite.app` 并打开完成首次引导，命令行工具 `ego-browser` 会自动注册到系统。
-   - 终端验证：`ego-browser --version`
 
 ---
 
