@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# AI Skills Unified CLI Entry Point
+# ==============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SKILL_NAME="$1"
+
+show_help() {
+    echo "AI Skills CLI"
+    echo ""
+    echo "Usage:"
+    echo "  ai-skill <skill-name> [options]"
+    echo ""
+    echo "Available Skills:"
+    echo "  create-test-account [--level 0|1|2]  Generate 3World test accounts with KYC"
+    echo ""
+    echo "Examples:"
+    echo "  ai-skill create-test-account --level 2   # Advanced KYC (Level 2)"
+    echo "  ai-skill create-test-account --level 1   # Standard KYC (Level 1)"
+    echo "  ai-skill create-test-account --level 0   # Basic Registered Account"
+    echo ""
+}
+
+if [ -z "$SKILL_NAME" ] || [ "$SKILL_NAME" = "-h" ] || [ "$SKILL_NAME" = "--help" ]; then
+    show_help
+    exit 0
+fi
+
+shift
+
+case "$SKILL_NAME" in
+    create-test-account|test-account|kyc)
+        node "${SCRIPT_DIR}/skills/create-test-account/scripts/fast-create-account.mjs" "$@"
+        ;;
+    *)
+        echo "❌ Unknown skill: $SKILL_NAME"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac
