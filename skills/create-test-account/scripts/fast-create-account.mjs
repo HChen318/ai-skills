@@ -37,7 +37,7 @@ const fileBack = ${JSON.stringify(fileBack)}
 const fileAddress = ${JSON.stringify(fileAddress)}
 
 const randomNum = Math.floor(100000 + Math.random() * 900000)
-const email = 'turbo_' + randomNum + '@gmail.com'
+const email = '3world_' + randomNum + '@gmail.com'
 const password = 'Password123!'
 const phone = '9' + Math.floor(1000000 + Math.random() * 9000000).toString().slice(0, 7)
 
