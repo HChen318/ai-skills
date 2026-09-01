@@ -53,6 +53,6 @@ node <path-to-skill>/scripts/fast-create-account.mjs --level 0
 ## 🔑 Account Defaults
 
 - **App Base URL**: `https://dev-app.3worldglobal.com`
-- **Password**: `Password123!`
+- **Password**: `Aa123456`
 - **Fixed Dev OTP**: `123456` (both Email and SMS)
 - **Document Assets**: Located in `resources/` (Germany ID Front/Back & Utility Bill)

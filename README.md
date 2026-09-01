@@ -47,5 +47,5 @@ npx skills add HChen318/ai-skills
 #### 🔑 环境默认常量
 
 - **测试环境地址**：`https://dev-app.3worldglobal.com`
-- **默认密码**：`Password123!`
+- **默认密码**：`Aa123456`
 - **测试环境验证码**：`123456`
