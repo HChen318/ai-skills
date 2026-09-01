@@ -17,7 +17,8 @@ Automates test account generation, phone binding, and KYC verification on the 3W
    - **Level 2 (Advanced KYC - 50,000 USDT limit, default)**: `node <skill-dir>/scripts/fast-create-account.mjs --level 2`
    - **Level 1 (Standard KYC - 10,000 USDT limit)**: `node <skill-dir>/scripts/fast-create-account.mjs --level 1`
    - **Level 0 (Basic Account - Registered & Bound Phone)**: `node <skill-dir>/scripts/fast-create-account.mjs --level 0`
-4. **Immediate Response**: Once the script outputs `>>> SUCCESS! TOTAL DURATION: ... <<<`, immediately format and return the generated credentials table to the user and stop.
+4. **DO NOT Modify Script Files**: **DO NOT** edit, rewrite, or modify `scripts/fast-create-account.mjs` or any files in the skill directory. All skill files are strictly read-only tools.
+5. **Immediate Response**: Once the script outputs `>>> SUCCESS! TOTAL DURATION: ... <<<`, immediately format and return the generated credentials table to the user and stop immediately.
 
 ---
 
