@@ -20,8 +20,6 @@ npx skills add HChen318/ai-skills -g
 npx skills add HChen318/ai-skills
 ```
 
-> 备选命令：`npx bzskills add HChen318/ai-skills --skill create-test-account`
-
 ---
 
 ## 🛠️ 前置环境依赖
@@ -42,11 +40,12 @@ npx skills add HChen318/ai-skills
 
 安装后，在 **Cursor**、**CodeX** 或 **Antigravity** 对话框中直接使用自然语言提需求：
 
-- 💬 *"帮我生成一个高级身份认证测试账号"*
-- 💬 *"生成一个完成了标准 KYC 认证的测试账号"*
-- 💬 *"生成一个已绑定手机的普通测试账号"*
+- 💬 _"帮我生成一个高级身份认证测试账号"_
+- 💬 _"生成一个完成了标准 KYC 认证的测试账号"_
+- 💬 _"生成一个已绑定手机的普通测试账号"_
 
 #### 🔑 环境默认常量
+
 - **测试环境地址**：`https://dev-app.3worldglobal.com`
 - **默认密码**：`Password123!`
 - **测试环境验证码**：`123456`
