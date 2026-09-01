@@ -147,7 +147,7 @@ if (targetLevel === 0) {
 // Clean up any stale worker spaces first
 const existingSpaces = await listTaskSpaces()
 for (const s of existingSpaces) {
-  if (s.name && s.name.startsWith('3world-kyc-worker')) {
+  if (s.name && (s.name.includes('turbo-kyc') || s.name.includes('3world-kyc') || s.name.includes('debug') || s.name.includes('test'))) {
     try { await completeTaskSpace(s.id, { keep: false }); } catch (_) {}
   }
 }
@@ -164,6 +164,9 @@ try {
       state: { token: "\${token}", user: \${JSON.stringify(userInfo)} },
       version: 0
     }));
+    localStorage.setItem('i18nextLng', 'zh');
+    document.cookie = "3world-token=\${token}; path=/; domain=.3worldglobal.com";
+    document.cookie = "3world-token=\${token}; path=/";
   })()\`)
   await gotoAndWait(baseUrl + '/identity')
   await wait(1.5)
@@ -175,16 +178,24 @@ try {
   cliLog('>>> [3/4] Automating Standard KYC Level 1...')
   const t2 = Date.now()
 
-  // Wait for and click "立即认证"
+  // Wait for and click "立即认证" / "Verify Now"
   await waitFor(async () => {
     return await js(String.raw\`(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && b.innerText.includes('立即认证'));
+      const btns = Array.from(document.querySelectorAll('button'));
+      const btn = btns.find(b => b.innerText && (
+        b.innerText.trim() === '立即认证' ||
+        b.innerText.trim() === 'Verify Now' ||
+        b.innerText.trim() === 'Verify now' ||
+        b.innerText.includes('立即认证') ||
+        b.innerText.includes('Verify Now')
+      ));
       if (btn) { btn.click(); return true; }
       return false;
     })()\`);
   }, 20000, 300);
 
   // 3.1 Start / Agree
+  cliLog('  - [Level 1] Accepting terms...')
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
@@ -216,6 +227,7 @@ try {
   })()\`)
 
   // 3.2 Step 1/2: Select Tax Country = Germany
+  cliLog('  - [Level 1] Selecting country (Germany)...')
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btn = document.querySelector('button.select-wrapper') || Array.from(document.querySelectorAll('button')).find(b => b.innerText && (b.innerText.includes('纳税居住国') || b.innerText.includes('Country') || b.innerText.includes('居住国')));
@@ -250,6 +262,7 @@ try {
   })()\`)
 
   // 3.3 Step 2/2: Select Issuing Country & ID Card
+  cliLog('  - [Level 1] Selecting document type (ID Card)...')
   await waitFor(async () => {
     const res = await evalInSumsub(String.raw\`(() => {
       const contBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('在此处继续') || b.innerText.includes('Continue here'));
@@ -301,11 +314,13 @@ try {
   })()\`)
 
   // 3.4 Upload Front & Back ID
+  cliLog('  - [Level 1] Uploading front and back ID cards...')
   await waitFor(async () => {
     return await setSumsubFileInputs([fileFront, fileBack]);
   }, 15000, 300)
 
   // 3.5 Wait for submit button to be enabled and click
+  cliLog('  - [Level 1] Submitting verification...')
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
@@ -321,6 +336,7 @@ try {
   await wait(2)
 
   // 3.6 Sync KYC Status with backend
+  cliLog('  - [Level 1] Synchronizing approval with sandbox backend...')
   await serverFetch(baseUrl + '/wapi/user/kyc/v1/updateKycStatusToPending', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', '3world-token': token, platform: 'web' },
@@ -357,16 +373,24 @@ try {
   await gotoAndWait(baseUrl + '/identity')
   await wait(1.5)
 
-  // Wait for and click "获得增强认证"
+  // Wait for and click "获得增强认证" / "Enhanced verification"
+  cliLog('  - [Level 2] Opening enhanced verification modal...')
   await waitFor(async () => {
     return await js(String.raw\`(() => {
-      const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && (b.innerText.includes('获得增强认证') || b.innerText.includes('增强认证')));
+      const btns = Array.from(document.querySelectorAll('button'));
+      const btn = btns.find(b => b.innerText && (
+        b.innerText.includes('获得增强认证') ||
+        b.innerText.includes('增强认证') ||
+        b.innerText.includes('Enhanced') ||
+        b.innerText.includes('enhanced')
+      ));
       if (btn) { btn.click(); return true; }
       return false;
     })()\`);
   }, 20000, 300);
 
   // Click 开始验证 / 在此处继续
+  cliLog('  - [Level 2] Agreeing to terms...')
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
@@ -384,11 +408,13 @@ try {
   }, 20000, 300)
 
   // Upload address proof
+  cliLog('  - [Level 2] Uploading address proof bill...')
   await waitFor(async () => {
     return await setSumsubFileInputs([fileAddress]);
   }, 15000, 300)
 
   // Wait for submit button to be enabled and click
+  cliLog('  - [Level 2] Submitting address proof...')
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
@@ -404,6 +430,7 @@ try {
   await wait(2)
 
   // Sync Level 2 status with backend
+  cliLog('  - [Level 2] Synchronizing Level 2 approval with backend...')
   await serverFetch(baseUrl + '/wapi/user/kyc/v1/updateKycStatusToPending', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', '3world-token': token, platform: 'web' },
