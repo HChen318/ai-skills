@@ -8,7 +8,7 @@
  * Target Levels:
  *   --level 0 : Pure API account registration + phone binding (~1.5 seconds)
  *   --level 1 : Standard KYC Level 1 (~20 seconds)
- *   --level 2 : Advanced KYC Level 2 (~40-45 seconds, default)
+ *   --level 2 : Advanced KYC Level 2 (~40-50 seconds, default)
  */
 
 import { execSync } from 'child_process';
@@ -41,7 +41,7 @@ const email = '3world_' + randomNum + '@gmail.com'
 const password = 'Aa123456'
 const phone = '9' + Math.floor(1000000 + Math.random() * 9000000).toString().slice(0, 7)
 
-async function waitFor(fn, timeoutMs = 25000, intervalMs = 250) {
+async function waitFor(fn, timeoutMs = 30000, intervalMs = 250) {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
     try {
@@ -53,13 +53,13 @@ async function waitFor(fn, timeoutMs = 25000, intervalMs = 250) {
   throw new Error('Timeout after ' + timeoutMs + 'ms')
 }
 
-// Helper to get active Sumsub iframe target
+// Get active Sumsub iframe target
 async function getActiveSumsubTarget() {
   const targets = await cdp('Target.getTargets')
   return targets.targetInfos.find(t => t.url.includes('sumsub.com') && t.type === 'iframe')
 }
 
-// Dynamically evaluate expression inside active Sumsub iframe session
+// Evaluate expression inside active Sumsub iframe session
 async function evalInSumsub(expr) {
   const sumsub = await getActiveSumsubTarget()
   if (!sumsub) return null
@@ -68,7 +68,7 @@ async function evalInSumsub(expr) {
   return res?.result?.value
 }
 
-// Dynamically set file inputs inside active Sumsub iframe session
+// Set file inputs inside Sumsub iframe
 async function setSumsubFileInputs(files) {
   const sumsub = await getActiveSumsubTarget()
   if (!sumsub) return false
@@ -90,11 +90,59 @@ async function setSumsubFileInputs(files) {
   if (inputs.length >= files.length) {
     for (let i = 0; i < files.length; i++) {
       await cdp('DOM.setFileInputFiles', { files: [files[i]], backendNodeId: inputs[i].backendNodeId }, sessionId)
-      await wait(0.4)
+      await wait(0.6)
     }
     return true
   }
   return false
+}
+
+// Click "Continue here / Agree and continue" if present — 简体 | 繁体 | English
+// Retries up to maxTries times
+async function tryClickContinueHere(maxTries = 4, intervalSec = 0.5) {
+  for (let i = 0; i < maxTries; i++) {
+    const clicked = await evalInSumsub(String.raw\`(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const btn = btns.find(b => b.innerText && (
+        b.innerText.includes('在此处继续') || b.innerText.includes('在此處繼續') ||
+        b.innerText.includes('Continue here') ||
+        b.innerText.includes('同意并继续') || b.innerText.includes('同意並繼續') ||
+        b.innerText.includes('Agree and continue')
+      ));
+      if (btn) { btn.click(); return true; }
+      return false;
+    })()\`)
+    if (clicked) return true
+    await wait(intervalSec)
+  }
+  return false
+}
+
+// Set React-controlled input value inside Sumsub (bypasses synthetic event system)
+async function setSumsubCountryInput(value) {
+  return await evalInSumsub(String.raw\`(() => {
+    const input = document.querySelector('input');
+    if (!input) return false;
+    try {
+      const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      nativeSetter.call(input, \${JSON.stringify(value)});
+    } catch(e) {
+      input.value = \${JSON.stringify(value)};
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  })()\`)
+}
+
+// Click Germany option from dropdown
+async function clickGermanyOption() {
+  return await evalInSumsub(String.raw\`(() => {
+    const all = Array.from(document.querySelectorAll('button, li, div[role="option"], span'));
+    const deu = all.find(b => b.innerText && (b.innerText.trim() === '德国' || b.innerText.trim() === 'Germany') && !b.className.includes('topbar'));
+    if (deu) { deu.click(); return true; }
+    return false;
+  })()\`)
 }
 
 // ----------------------------------------------------
@@ -132,14 +180,16 @@ const userRes = JSON.parse(await serverFetch(baseUrl + '/wapi/user/getInfo', {
   headers: { 'Content-Type': 'application/json', '3world-token': token, platform: 'web' }
 }))
 const fullUser = userRes.data
+const userId = fullUser?.userId || fullUser?.id || fullUser?.uid || 'N/A'
 cliLog('✓ [Phase 1 Done] Account created in ' + ((Date.now() - t0)/1000).toFixed(2) + 's (' + email + ')')
 
 if (targetLevel === 0) {
   cliLog('=================================================')
   cliLog('>>> SUCCESS! TOTAL DURATION: ' + ((Date.now() - totalStart)/1000).toFixed(2) + 's <<<')
-  cliLog('Email: ' + email + ' | Password: ' + password)
+  cliLog('Email: ' + email)
   cliLog('Phone: +852 ' + phone)
-  cliLog('KYC Level: 0 (Basic Account with Bound Phone)')
+  cliLog('Password: ' + password)
+  cliLog('UID: ' + userId)
   cliLog('=================================================')
   return
 }
@@ -164,7 +214,7 @@ try {
     document.cookie = "3world-token=\${token}; path=/";
   })()\`)
   await gotoAndWait(baseUrl + '/identity')
-  await wait(1.5)
+  await wait(3)
   cliLog('✓ [Phase 2 Done] Identity page loaded in ' + ((Date.now() - t1)/1000).toFixed(2) + 's')
 
   // ----------------------------------------------------
@@ -173,98 +223,103 @@ try {
   cliLog('>>> [3/4] Automating Standard KYC Level 1...')
   const t2 = Date.now()
 
+  // 3.0 Click "立即认证" button (exact match — avoid nav tab "身份认证"/"身份認證")
+  // Supports: 简体 | 繁体 | English
   await waitFor(async () => {
     return await js(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const btn = btns.find(b => b.innerText && (
-        b.innerText.trim() === '立即认证' ||
-        b.innerText.trim() === 'Verify Now' ||
-        b.innerText.includes('立即认证')
-      ));
+      const btn = btns.find(b => {
+        const t = (b.innerText || '').trim();
+        return t === '立即认证' || t === '立即認證' || t === 'Verify Now' ||
+               (t.includes('立即') && (t.includes('认证') || t.includes('認證')));
+      });
       if (btn) { btn.click(); return true; }
       return false;
     })()\`)
-  }, 20000, 300)
+  }, 30000, 400)
 
-  // 3.1 Start / Agree
+  // Wait for Sumsub SDK to fetch access token and render iframe (takes ~5-8s)
+  await wait(6)
+
+  // 3.1 Wait for Sumsub iframe to render "Start verification" button
+  // Supports: 简体 | 繁体 | English
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
       const btn = btns.find(b => b.innerText && (
-        b.innerText.includes('开始验证') ||
+        b.innerText.includes('开始验证') || b.innerText.includes('開始驗證') ||
         b.innerText.includes('Start verification') ||
-        b.innerText.includes('在此处继续') ||
+        b.innerText.includes('在此处继续') || b.innerText.includes('在此處繼續') ||
         b.innerText.includes('Continue here') ||
-        b.innerText.includes('同意') ||
-        b.innerText.includes('Agree')
+        b.innerText.includes('同意') || b.innerText.includes('Agree')
       ));
       if (btn) { btn.click(); return true; }
       return false;
     })()\`)
-  }, 20000, 300)
+  }, 30000, 600)
 
-  await wait(0.8)
+  // 3.1b After Start/Agree, Sumsub may show a secondary "Continue here" — poll for it
+  await wait(1.2)
+  await tryClickContinueHere(4, 0.6)
+
+  // 3.2 Tax Country — click dropdown, type Germany, select option, confirm
+  await waitFor(async () => {
+    return await evalInSumsub(String.raw\`(() => {
+      const btn = document.querySelector('button.select-wrapper') ||
+        Array.from(document.querySelectorAll('button')).find(b => b.innerText && (
+          b.innerText.includes('纳税居住国') || b.innerText.includes('納稅居住國') ||
+          b.innerText.includes('Country') || b.innerText.includes('居住国') || b.innerText.includes('居住國')
+        ));
+      if (btn) { btn.click(); return true; }
+      return false;
+    })()\`)
+  }, 20000, 250)
+
+  await wait(0.4)
+  await setSumsubCountryInput('德国')
+  await wait(0.6)
+  // Try 简体 first, fallback to 繁体, then English
+  let germanyClicked = await clickGermanyOption()
+  if (!germanyClicked) {
+    await setSumsubCountryInput('德國')
+    await wait(0.5)
+    germanyClicked = await clickGermanyOption()
+  }
+  if (!germanyClicked) {
+    await setSumsubCountryInput('Germany')
+    await wait(0.5)
+    await clickGermanyOption()
+  }
+
+  await wait(0.5)
   await evalInSumsub(String.raw\`(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const btn = btns.find(b => b.innerText && (
-      b.innerText.includes('在此处继续') ||
-      b.innerText.includes('Continue here') ||
-      b.innerText.includes('同意并继续') ||
-      b.innerText.includes('Agree and continue') ||
-      b.innerText.includes('Continue') ||
-      b.innerText.includes('继续')
+    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && (
+      b.innerText.trim() === '继续' || b.innerText.trim() === '繼續' || b.innerText.includes('Continue')
     ));
     if (btn) btn.click();
   })()\`)
 
-  // 3.2 Tax Country Germany
-  await waitFor(async () => {
-    return await evalInSumsub(String.raw\`(() => {
-      const btn = document.querySelector('button.select-wrapper') || Array.from(document.querySelectorAll('button')).find(b => b.innerText && (b.innerText.includes('纳税居住国') || b.innerText.includes('Country') || b.innerText.includes('居住国')));
-      if (btn) { btn.click(); return true; }
-      return false;
-    })()\`)
-  }, 15000, 250)
-
-  await waitFor(async () => {
-    return await evalInSumsub(String.raw\`(() => {
-      const input = document.querySelector('input');
-      if (input) {
-        input.value = '德国';
-        input.dispatchEvent(new Event('input', { bubbles: true }));
-        return true;
-      }
-      return false;
-    })()\`)
-  }, 10000, 200)
-
-  await wait(0.4)
-  await evalInSumsub(String.raw\`(() => {
-    const btns = Array.from(document.querySelectorAll('button, li, div[role="option"]'));
-    const deu = btns.find(b => b.innerText && (b.innerText.trim() === '德国' || b.innerText.includes('Germany')) && !b.className.includes('topbar'));
-    if (deu) deu.click();
-  })()\`)
-
-  await wait(0.5)
-  await evalInSumsub(String.raw\`(() => {
-    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && (b.innerText.trim() === '继续' || b.innerText.includes('Continue')));
-    if (btn) btn.click();
-  })()\`)
-
-  // 3.3 Issuing Country & ID Card
+  // 3.3 Issuing Country & ID Card type selection
   await waitFor(async () => {
     const res = await evalInSumsub(String.raw\`(() => {
-      const contBtn = Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes('在此处继续') || b.innerText.includes('Continue here'));
+      const contBtn = Array.from(document.querySelectorAll('button')).find(b =>
+        b.innerText.includes('在此处继续') || b.innerText.includes('在此處繼續') || b.innerText.includes('Continue here')
+      );
       if (contBtn) { contBtn.click(); }
 
       const countryBtn = document.querySelector('button.select-wrapper');
-      if (countryBtn && !countryBtn.innerText.includes('德国')) {
+      if (countryBtn &&
+          !countryBtn.innerText.includes('德国') &&
+          !countryBtn.innerText.includes('德國') &&
+          !countryBtn.innerText.includes('Germany')) {
         countryBtn.click();
         return 'need-country';
       }
 
       const labels = Array.from(document.querySelectorAll('label, div, li'));
-      const idLabel = labels.find(l => l.innerText && (l.innerText.trim() === '身份证' || l.innerText.trim() === 'ID card'));
+      const idLabel = labels.find(l => l.innerText && (
+        l.innerText.trim() === '身份证' || l.innerText.trim() === '身份證' || l.innerText.trim() === 'ID card'
+      ));
       if (idLabel) {
         idLabel.click();
         return true;
@@ -274,51 +329,64 @@ try {
 
     if (res === 'need-country') {
       await wait(0.4);
-      await evalInSumsub(String.raw\`(() => {
-        const input = document.querySelector('input');
-        if (input) { input.value = '德国'; input.dispatchEvent(new Event('input', { bubbles: true })); }
-      })()\`);
-      await wait(0.4);
-      await evalInSumsub(String.raw\`(() => {
-        const btns = Array.from(document.querySelectorAll('button, li, div[role="option"]'));
-        const deu = btns.find(b => b.innerText && (b.innerText.trim() === '德国' || b.innerText.includes('Germany')) && !b.className.includes('topbar'));
-        if (deu) deu.click();
-      })()\`);
+      await setSumsubCountryInput('德国');
+      await wait(0.6);
+      let clicked = await clickGermanyOption();
+      if (!clicked) {
+        await setSumsubCountryInput('德國');
+        await wait(0.5);
+        clicked = await clickGermanyOption();
+      }
+      if (!clicked) {
+        await setSumsubCountryInput('Germany');
+        await wait(0.5);
+        await clickGermanyOption();
+      }
       await wait(0.4);
       await evalInSumsub(String.raw\`(() => {
         const labels = Array.from(document.querySelectorAll('label, div, li'));
-        const idLabel = labels.find(l => l.innerText && (l.innerText.trim() === '身份证' || l.innerText.trim() === 'ID card'));
+        const idLabel = labels.find(l => l.innerText && (
+          l.innerText.trim() === '身份证' || l.innerText.trim() === '身份證' || l.innerText.trim() === 'ID card'
+        ));
         if (idLabel) idLabel.click();
       })()\`);
       return true;
     }
 
     return res;
-  }, 15000, 250)
+  }, 20000, 250)
 
   await wait(0.5)
   await evalInSumsub(String.raw\`(() => {
-    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && (b.innerText.trim() === '继续' || b.innerText.includes('Continue')));
+    const btn = Array.from(document.querySelectorAll('button')).find(b => b.innerText && (
+      b.innerText.trim() === '继续' || b.innerText.trim() === '繼續' || b.innerText.includes('Continue')
+    ));
     if (btn) btn.click();
   })()\`)
 
-  // 3.4 Upload Front & Back ID
+  // 3.4 Upload Front & Back ID — wait until both file inputs appear
   await waitFor(async () => {
     return await setSumsubFileInputs([fileFront, fileBack]);
-  }, 15000, 300)
+  }, 20000, 400)
 
-  // 3.5 Submit Level 1
+  // Give Sumsub time to process images before submit button becomes enabled
+  await wait(3)
+
+  // 3.5 Submit Level 1 — wait for button to be enabled then click
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const btn = btns.find(b => b.innerText && (b.innerText.trim() === '继续' || b.innerText.includes('Continue') || b.innerText.includes('提交')));
+      const btn = btns.find(b => b.innerText && (
+        b.innerText.trim() === '继续' || b.innerText.trim() === '繼續' ||
+        b.innerText.includes('Continue') || b.innerText.includes('提交')
+      ));
       if (btn && !btn.disabled) {
         btn.click();
         return true;
       }
       return false;
     })()\`);
-  }, 15000, 300);
+  }, 20000, 400);
 
   await wait(2)
 
@@ -329,7 +397,7 @@ try {
     body: JSON.stringify({ kycLevel: 1 })
   })
 
-  // Poll for Level 1 approval
+  // Poll for Level 1 approval (extended to 35s)
   await waitFor(async () => {
     const res = JSON.parse(await serverFetch(baseUrl + '/wapi/user/kyc/v1/getUserKycStatus', {
       method: 'GET',
@@ -337,16 +405,17 @@ try {
     }))
     if (res.data?.kycLevel === "2" || (res.data?.kycLevel === "1" && res.data?.status === "5")) return true
     return false
-  }, 20000, 500)
+  }, 35000, 500)
 
   cliLog('✓ [Phase 3 Done] Standard KYC Level 1 Approved in ' + ((Date.now() - t2)/1000).toFixed(2) + 's')
 
   if (targetLevel === 1) {
     cliLog('=================================================')
     cliLog('>>> SUCCESS! TOTAL DURATION: ' + ((Date.now() - totalStart)/1000).toFixed(2) + 's <<<')
-    cliLog('Email: ' + email + ' | Password: ' + password)
+    cliLog('Email: ' + email)
     cliLog('Phone: +852 ' + phone)
-    cliLog('KYC Level: 1 (Standard Verified)')
+    cliLog('Password: ' + password)
+    cliLog('UID: ' + userId)
     cliLog('=================================================')
     return
   }
@@ -357,81 +426,78 @@ try {
   cliLog('>>> [4/4] Automating Advanced KYC Level 2...')
   const t3 = Date.now()
   await gotoAndWait(baseUrl + '/identity')
-  await wait(1.5)
+  await wait(2.5)
 
-  // Click "获得增强认证"
+  // 4.1 Click "获得增强认证" / "Enhanced" button — 简体 | 繁体 | English
   await waitFor(async () => {
     return await js(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
       const btn = btns.find(b => b.innerText && (
-        b.innerText.includes('获得增强认证') ||
-        b.innerText.includes('增强认证') ||
-        b.innerText.includes('Enhanced')
+        b.innerText.includes('获得增强认证') || b.innerText.includes('獲得增強認證') ||
+        b.innerText.includes('增强认证') || b.innerText.includes('增強認證') ||
+        b.innerText.includes('Enhanced') ||
+        b.innerText.includes('Upgrade') ||
+        b.innerText.includes('升级认证') || b.innerText.includes('升級認證')
       ));
       if (btn) { btn.click(); return true; }
       return false;
     })()\`)
-  }, 20000, 300)
+  }, 25000, 300)
 
-  // Click 开始验证 / 在此处继续
+  // 4.2 Wait for Sumsub iframe to load, click Start/Agree — 简体 | 繁体 | English
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
       const btn = btns.find(b => b.innerText && (
-        b.innerText.includes('开始验证') ||
+        b.innerText.includes('开始验证') || b.innerText.includes('開始驗證') ||
         b.innerText.includes('Start verification') ||
-        b.innerText.includes('在此处继续') ||
+        b.innerText.includes('在此处继续') || b.innerText.includes('在此處繼續') ||
         b.innerText.includes('Continue here') ||
-        b.innerText.includes('同意') ||
-        b.innerText.includes('Agree')
+        b.innerText.includes('同意') || b.innerText.includes('Agree')
       ));
       if (btn) { btn.click(); return true; }
       return false;
     })()\`)
-  }, 20000, 300)
+  }, 25000, 300)
 
-  await wait(0.8)
-  await evalInSumsub(String.raw\`(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const btn = btns.find(b => b.innerText && (
-      b.innerText.includes('在此处继续') ||
-      b.innerText.includes('Continue here') ||
-      b.innerText.includes('同意并继续') ||
-      b.innerText.includes('Agree and continue') ||
-      b.innerText.includes('Continue') ||
-      b.innerText.includes('继续')
-    ));
-    if (btn) btn.click();
-  })()\`)
+  // 4.2b Poll for secondary "Continue here" after Start/Agree
+  await wait(1.2)
+  await tryClickContinueHere(4, 0.6)
 
-  // Upload address proof
+  // 4.3 Upload address proof — wait until file input appears
   await waitFor(async () => {
     return await setSumsubFileInputs([fileAddress]);
-  }, 15000, 300)
+  }, 20000, 400)
 
-  // Wait for submit button to be enabled and click
+  // Give Sumsub time to process the image
+  await wait(3)
+
+  // 4.4 Wait for submit button to be enabled and click — 简体 | 繁体 | English
   await waitFor(async () => {
     return await evalInSumsub(String.raw\`(() => {
       const btns = Array.from(document.querySelectorAll('button'));
-      const btn = btns.find(b => b.innerText && (b.innerText.trim() === '继续' || b.innerText.includes('Continue') || b.innerText.includes('提交')));
+      const btn = btns.find(b => b.innerText && (
+        b.innerText.trim() === '继续' || b.innerText.trim() === '繼續' ||
+        b.innerText.includes('Continue') || b.innerText.includes('提交')
+      ));
       if (btn && !btn.disabled) {
         btn.click();
         return true;
       }
       return false;
     })()\`);
-  }, 15000, 300);
+  }, 20000, 400);
 
   await wait(2)
 
-  // Sync Level 2 status with backend
+  // 4.5 Sync Level 2 status with backend
   await serverFetch(baseUrl + '/wapi/user/kyc/v1/updateKycStatusToPending', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', '3world-token': token, platform: 'web' },
     body: JSON.stringify({ kycLevel: 2 })
   })
 
-  // Poll for Level 2 approval
+  // Poll for Level 2 approval (extended to 35s)
   await waitFor(async () => {
     const res = JSON.parse(await serverFetch(baseUrl + '/wapi/user/kyc/v1/getUserKycStatus', {
       method: 'GET',
@@ -439,26 +505,17 @@ try {
     }))
     if (res.data?.kycLevel === "2" && res.data?.status === "5") return true
     return false
-  }, 20000, 500)
+  }, 35000, 500)
 
   cliLog('✓ [Phase 4 Done] Advanced KYC Level 2 Approved in ' + ((Date.now() - t3)/1000).toFixed(2) + 's')
-
-  // Final details
-  let detailsRes = null
-  try {
-    detailsRes = JSON.parse(await serverFetch(baseUrl + '/wapi/user/kyc/v1/getUserKycDetails', {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json', '3world-token': token, platform: 'web' }
-    }))
-  } catch (_) {}
 
   const totalSec = ((Date.now() - totalStart) / 1000).toFixed(2)
   cliLog('=================================================')
   cliLog('>>> SUCCESS! TOTAL DURATION: ' + totalSec + 's <<<')
-  cliLog('Email: ' + email + ' | Password: ' + password)
+  cliLog('Email: ' + email)
   cliLog('Phone: +852 ' + phone)
-  cliLog('KYC Level: ' + (detailsRes?.data?.kycLevel || '2') + ' (Status: 5 - Advanced Verified)')
-  cliLog('Crypto Limit: ' + (detailsRes?.data?.cryptoDepositLimit || '50,000') + ' / ' + (detailsRes?.data?.cryptoWithdrawalLimit || '50,000') + ' USDT')
+  cliLog('Password: ' + password)
+  cliLog('UID: ' + userId)
   cliLog('=================================================')
 } finally {
   try {
